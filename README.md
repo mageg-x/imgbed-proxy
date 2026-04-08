@@ -35,6 +35,8 @@ npm install
 
 ### 部署到 Cloudflare Worker
 
+#### 方式一：Wrangler CLI
+
 1. 安装 Wrangler CLI 并登录：
 ```bash
 npx wrangler login
@@ -46,6 +48,7 @@ npm run deploy:cf
 ```
 
 部署完成后，访问 `https://imgbed-proxy.<your-subdomain>.workers.dev`
+
 
 ### 部署到 Vercel
 
