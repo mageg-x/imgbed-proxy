@@ -1,6 +1,6 @@
 {
   "version": 2,
   "routes": [
-    { "src": "/(.*)", "dest": "/api/proxy.js", "continue": true }
+    { "src": "/(.*)", "dest": "/src/entry-vercel.js", "continue": true }
   ]
 }
