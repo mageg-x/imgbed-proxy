@@ -10,7 +10,9 @@
     "wrangler": "^4.0.0"
   },
   "scripts": {
-    "build": "esbuild src/index.js --bundle --minify --format=esm --platform=browser --target=chrome90 --outfile=dist/bundle.js",
-    "deploy": "npm run build && wrangler deploy"
+    "build:cf": "esbuild src/entry-cf.js --bundle --minify --format=esm --platform=browser --target=chrome90 --outfile=dist/bundle.js",
+    "build:vercel": "echo Vercel builds automatically, no build step needed",
+    "deploy:cf": "npm run build:cf && wrangler deploy",
+    "deploy:vercel": "vercel --prod"
   }
 }

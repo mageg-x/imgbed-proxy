@@ -375,8 +375,6 @@ async function handleRequest(request) {
     return handleDownload(url);
 }
 
-// ==================== 启动 ====================
+// ==================== 导出 ====================
 
-addEventListener('fetch', event => {
-    event.respondWith(handleRequest(event.request));
-});
+export { handleRequest };
