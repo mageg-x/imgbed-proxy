@@ -1,6 +1,9 @@
 {
   "version": 2,
   "routes": [
-    { "src": "/(.*)", "dest": "/src/entry-vercel.js", "continue": true }
+    { "src": "/s3-proxy", "dest": "/api/entry-vc" },
+    { "src": "/s3-proxy/(.*)", "dest": "/api/entry-vc" },
+    { "src": "/proxy/(.*)", "dest": "/api/entry-vc" },
+    { "src": "/(.*)", "dest": "/api/entry-vc" }
   ]
 }

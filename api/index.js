@@ -104,12 +104,69 @@ async function handleDownload(url) {
         return new Response(`fetch failed: ${e.message}`, { status: 502 });
     }
 
+    // 根据文件扩展名修正 Content-Type
+    const ext = '.' + filePath.split('.').pop().split('?')[0].toLowerCase();
+    const mimeType = getMimeTypeByExt(ext);
+    const originalContentType = response.headers.get('Content-Type') || '';
+
     // 构造代理响应，保留原响应体和状态
     const proxyResponse = new Response(response.body, response);
+
+    // 如果原始类型不正确或是 attachment，修正为正确的 MIME 类型
+    if (!originalContentType ||
+        originalContentType === 'application/octet-stream' ||
+        originalContentType === 'attachment' ||
+        originalContentType.startsWith('application/octet') ||
+        (ext === '.svg' && originalContentType.includes('text/html'))) {
+        proxyResponse.headers.set('Content-Type', mimeType);
+    }
+
     proxyResponse.headers.set('Cache-Control', 'public, max-age=31536000');
     proxyResponse.headers.set('Access-Control-Allow-Origin', '*');
 
+    // Vercel Edge Runtime 会自动解压响应体，但保留 Content-Encoding 头
+    proxyResponse.headers.delete('content-encoding');
+
     return proxyResponse;
+}
+
+/**
+ * 根据文件扩展名获取 MIME 类型
+ */
+function getMimeTypeByExt(ext) {
+    const mimeTypes = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.bmp': 'image/bmp',
+        '.ico': 'image/x-icon',
+        '.tiff': 'image/tiff',
+        '.tif': 'image/tiff',
+        '.heic': 'image/heic',
+        '.heif': 'image/heif',
+        '.avif': 'image/avif',
+        '.pdf': 'application/pdf',
+        '.zip': 'application/zip',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.flac': 'audio/flac',
+        '.json': 'application/json',
+        '.xml': 'application/xml',
+        '.html': 'text/html',
+        '.htm': 'text/html',
+        '.css': 'text/css',
+        '.js': 'application/javascript',
+        '.txt': 'text/plain',
+    };
+    return mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
 }
 
 // ==================== 上传代理 ====================
@@ -191,6 +248,7 @@ async function handleUpload(request, url) {
             method: request.method,
             headers: proxyHeaders,
             body: request.body,
+            duplex: 'half',
         });
     } catch (e) {
         console.error(`upload: fetch failed, target=${targetUrl}, error=${e.message}`);
@@ -207,6 +265,10 @@ async function handleUpload(request, url) {
     // 移除 Cloudflare 特有的响应头，避免污染
     proxyResponse.headers.delete('cf-cache-status');
     proxyResponse.headers.delete('cf-ray');
+
+    // Vercel Edge Runtime 会自动解压响应体，但保留 Content-Encoding 头
+    // 需要删除该头，否则客户端会误以为数据还是压缩的
+    proxyResponse.headers.delete('content-encoding');
 
     return proxyResponse;
 }
