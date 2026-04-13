@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "echo 'No build needed'",
+  "outputDirectory": "api",
   "routes": [
     { "src": "/s3-proxy", "dest": "/api/entry-vc" },
     { "src": "/s3-proxy/(.*)", "dest": "/api/entry-vc" },

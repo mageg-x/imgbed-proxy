@@ -11,6 +11,8 @@
 
 import { AwsClient } from 'aws4fetch';
 
+const FIXED_IV = new Uint8Array([0x42, 0x6f, 0x62, 0x20, 0x4c, 0x69, 0x6b, 0x65, 0x73, 0x20, 0x43, 0x61]);
+
 // ==================== Base58 编解码 ====================
 
 /** Base58 字母表（不含 0OIl 容易混淆的字符） */
@@ -24,12 +26,11 @@ for (let i = 0; i < ALPHABET.length; i++) {
 }
 
 /**
- * Base58 解码
+ * Base58 解码为字节数组
  * @param {string} str - Base58 编码的字符串
- * @returns {string} 解码后的原始字符串
- * @throws {Error} 遇到无效字符时抛出
+ * @returns {Uint8Array} 解码后的原始字节
  */
-function base58Decode(str) {
+function base58DecodeToBytes(str) {
     let result = 0n;
     for (const ch of str) {
         const val = CHAR_TO_VALUE.get(ch);
@@ -43,11 +44,19 @@ function base58Decode(str) {
         bytes.unshift(Number(result & 0xFFn));
         result >>= 8n;
     }
-    // 处理前导 1（代表零字节）
     for (let i = 0; i < str.length && str[i] === '1'; i++) {
         bytes.unshift(0);
     }
-    return new TextDecoder().decode(new Uint8Array(bytes));
+    return new Uint8Array(bytes);
+}
+
+/**
+ * Base58 解码
+ * @param {string} str - Base58 编码的字符串
+ * @returns {string} 解码后的原始字符串
+ */
+function base58Decode(str) {
+    return new TextDecoder().decode(base58DecodeToBytes(str));
 }
 
 // ==================== 下载代理 ====================
@@ -87,6 +96,11 @@ async function handleDownload(url) {
     } catch (e) {
         console.error(`download: base58 decode failed, encoded=${encodedHost}, error=${e.message}`);
         return new Response(`base58 decode failed: ${e.message}`, { status: 400 });
+    }
+
+    // Telegram 特殊处理
+    if (targetHost.startsWith('telegram:')) {
+        return handleTelegram(targetHost, filePath);
     }
 
     // 构造目标 URL
@@ -167,6 +181,62 @@ function getMimeTypeByExt(ext) {
         '.txt': 'text/plain',
     };
     return mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
+}
+
+// ==================== Telegram 代理 ====================
+
+async function handleTelegram(targetHost, filePath) {
+    const encrypted = targetHost.slice('telegram:'.length);
+
+    let token, fileId;
+    try {
+        const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: FIXED_IV },
+            await crypto.subtle.importKey('raw', new TextEncoder().encode('m3X9pL2qR8tN4vW6cY1eF3hJ5kU7bA0z'), 'AES-GCM', false, ['encrypt', 'decrypt']),
+            base58DecodeToBytes(encrypted)
+        );
+        const text = new TextDecoder().decode(decrypted);
+        [token, fileId] = text.split('|');
+    } catch (e) {
+        console.error(`telegram: aes decrypt failed, error=${e.message}`);
+        return new Response(`telegram decrypt failed: ${e.message}`, { status: 400 });
+    }
+
+    let filePathResult;
+    try {
+        const getFileResp = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+        const getFileData = await getFileResp.json();
+        if (!getFileData.ok) {
+            console.error(`telegram: getFile failed, response=${JSON.stringify(getFileData)}`);
+            return new Response(`telegram getFile failed: ${getFileData.description || 'unknown error'}`, { status: 502 });
+        }
+        filePathResult = getFileData.result.file_path;
+    } catch (e) {
+        console.error(`telegram: getFile api failed, error=${e.message}`);
+        return new Response(`telegram getFile failed: ${e.message}`, { status: 502 });
+    }
+
+    const directUrl = `https://api.telegram.org/file/bot${token}/${filePathResult}`;
+
+    let response;
+    try {
+        response = await fetch(directUrl);
+    } catch (e) {
+        console.error(`telegram: fetch file failed, error=${e.message}`);
+        return new Response(`telegram fetch failed: ${e.message}`, { status: 502 });
+    }
+
+    const ext = '.' + filePath.split('.').pop().split('?')[0].toLowerCase();
+    const mimeType = getMimeTypeByExt(ext);
+
+    const proxyResponse = new Response(response.body, response);
+    proxyResponse.headers.set('Content-Type', mimeType);
+    proxyResponse.headers.set('Content-Disposition', `inline; filename="${filePath.split('/').pop()}"`);
+    proxyResponse.headers.set('Cache-Control', 'public, max-age=31536000');
+    proxyResponse.headers.set('Access-Control-Allow-Origin', '*');
+    proxyResponse.headers.delete('content-encoding');
+
+    return proxyResponse;
 }
 
 // ==================== 上传代理 ====================
