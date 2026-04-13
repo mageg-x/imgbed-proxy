@@ -5,7 +5,10 @@
  * 1. 下载代理 (/{base58_encoded_host}/...) - 转发 HTTP GET 请求，添加缓存头
  * 2. 上传代理 (/proxy/{base58_encoded_host}/...) - 转发 multipart/form-data 上传请求
  * 3. S3 代理 (/s3-proxy) - 接收 S3 签名请求，重新签名后转发到 S3/R2/COS
- *
+ * 4、代理接收的格式，telegram和discord要特殊
+      - Telegram: `https://代理域名/{base58("telegram:" + AES加密(token|file_id))}/{原始文件名}`
+      - Discord: `https://代理域名/{base58("discord:" + AES加密(bot_token|channel_id|message_id|attachment_id))}/{原始文件名}`
+
  * 目标主机通过 Base58 编码混淆，支持 Telegram、Discord 等多种存储后端
  */
 
@@ -101,6 +104,11 @@ async function handleDownload(url) {
     // Telegram 特殊处理
     if (targetHost.startsWith('telegram:')) {
         return handleTelegram(targetHost, filePath);
+    }
+
+    // Discord 特殊处理
+    if (targetHost.startsWith('discord:')) {
+        return handleDiscord(targetHost, filePath);
     }
 
     // 构造目标 URL
@@ -232,6 +240,65 @@ async function handleTelegram(targetHost, filePath) {
     const proxyResponse = new Response(response.body, response);
     proxyResponse.headers.set('Content-Type', mimeType);
     proxyResponse.headers.set('Content-Disposition', `inline; filename="${filePath.split('/').pop()}"`);
+    proxyResponse.headers.set('Cache-Control', 'public, max-age=31536000');
+    proxyResponse.headers.set('Access-Control-Allow-Origin', '*');
+    proxyResponse.headers.delete('content-encoding');
+
+    return proxyResponse;
+}
+
+// ==================== Discord 代理 ====================
+
+async function handleDiscord(targetHost, filePath) {
+    const encrypted = targetHost.slice('discord:'.length);
+
+    let token, channelId, messageId, attachmentId;
+    try {
+        const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: FIXED_IV },
+            await crypto.subtle.importKey('raw', new TextEncoder().encode('m3X9pL2qR8tN4vW6cY1eF3hJ5kU7bA0z'), 'AES-GCM', false, ['encrypt', 'decrypt']),
+            base58DecodeToBytes(encrypted)
+        );
+        const text = new TextDecoder().decode(decrypted);
+        [token, channelId, messageId, attachmentId] = text.split('|');
+    } catch (e) {
+        console.error(`discord: aes decrypt failed, error=${e.message}`);
+        return new Response(`discord decrypt failed: ${e.message}`, { status: 400 });
+    }
+
+    let attachmentUrl;
+    try {
+        const msgResp = await fetch(
+            `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`,
+            { headers: { 'Authorization': `Bot ${token}` } }
+        );
+        if (!msgResp.ok) {
+            console.error(`discord: get message failed, status=${msgResp.status}`);
+            return new Response(`discord get message failed: ${msgResp.status}`, { status: 502 });
+        }
+        const msgData = await msgResp.json();
+        const attachment = msgData.attachments?.find(a => a.id === attachmentId);
+        if (!attachment) {
+            return new Response('attachment not found', { status: 404 });
+        }
+        attachmentUrl = attachment.url;
+    } catch (e) {
+        console.error(`discord: api failed, error=${e.message}`);
+        return new Response(`discord api failed: ${e.message}`, { status: 502 });
+    }
+
+    let response;
+    try {
+        response = await fetch(attachmentUrl);
+    } catch (e) {
+        console.error(`discord: fetch file failed, error=${e.message}`);
+        return new Response(`discord fetch failed: ${e.message}`, { status: 502 });
+    }
+
+    const filename = filePath.split('/').pop();
+
+    const proxyResponse = new Response(response.body, response);
+    proxyResponse.headers.set('Content-Disposition', `inline; filename="${filename}"`);
     proxyResponse.headers.set('Cache-Control', 'public, max-age=31536000');
     proxyResponse.headers.set('Access-Control-Allow-Origin', '*');
     proxyResponse.headers.delete('content-encoding');
